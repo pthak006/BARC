@@ -112,7 +112,10 @@ def main():
         for test_idx, test_pair in enumerate(problem.test_pairs):
             # ground truth
             gt_grid = test_pair.y.tolist()
-            candidate_solutions = test_outputs_for_uid[test_idx]
+            if test_idx < len(test_outputs_for_uid):
+                candidate_solutions = test_outputs_for_uid[test_idx]
+            else:
+                candidate_solutions = []
             # If any of top 2 = ground truth
             if any(sol == gt_grid for sol in candidate_solutions):
                 # partial credit if multiple test pairs
