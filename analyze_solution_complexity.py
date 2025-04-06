@@ -21,6 +21,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from tqdm import tqdm
 import logging
+from typing import Optional, Dict, List
 
 # --- Imports from BARC ---
 # Assume these are importable from the BARC project structure
@@ -79,45 +80,77 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- NLL Calculation Function ---
-@torch.no_grad()
+@torch.no_grad() # Ensure no gradients are calculated during NLL computation
 def calculate_nll(prompt_text: str, completion_text: str, model, tokenizer, device='cuda', model_max_len=None) -> Optional[float]:
-    """Calculates the total negative log-likelihood of the completion_text given the prompt_text."""
+    """
+    Calculates the total negative log-likelihood of the completion_text given the prompt_text.
+    Uses standard tokenizer call and handles prompt/completion separation for labeling.
+    """
     # Use the model's configured max length if not provided
     if model_max_len is None:
-        model_max_len = getattr(model.config, 'max_position_embeddings', 2048)
+        model_max_len = getattr(model.config, 'max_position_embeddings', 2048) # Default to 2048 if not found
 
     try:
-        # Tokenize separately first to check length before combining
-        prompt_tokens_list = tokenizer.encode(prompt_text, add_special_tokens=False) # Don't add BOS here if template adds it
-        completion_tokens_list = tokenizer.encode(completion_text, add_special_tokens=False)
+        # 1. Tokenize prompt and completion separately to find prompt length
+        # Important: Use add_special_tokens=False initially if the model's template logic
+        # is handled by build_inputs_with_special_tokens later or if we handle manually.
+        # Let's assume the prompt already has necessary BOS etc. from apply_chat_template
+        # and completion should be treated as raw text.
+        prompt_encoding = tokenizer(prompt_text, add_special_tokens=False, return_tensors="pt", truncation=False)
+        completion_encoding = tokenizer(completion_text, add_special_tokens=False, return_tensors="pt", truncation=False)
 
-        # Combine tokens respecting chat template logic (simplified: assume prompt needs BOS, completion doesn't)
-        # This might need refinement based on the exact template used during generation
-        input_ids_list = tokenizer.build_inputs_with_special_tokens(prompt_tokens_list, completion_tokens_list)
-        prompt_len_in_combined = len(tokenizer.build_inputs_with_special_tokens(prompt_tokens_list)) # Length of prompt including special tokens added by template
+        prompt_ids = prompt_encoding['input_ids']
+        completion_ids = completion_encoding['input_ids']
 
-        # Check length constraint
-        if len(input_ids_list) > model_max_len:
-             logger.warning(f"Sequence length {len(input_ids_list)} exceeds model max length {model_max_len}. Skipping NLL calculation.")
+        # 2. Combine into a single sequence
+        # Note: Depending on the model/tokenizer, special tokens (like BOS/EOS) might need
+        # careful handling. This assumes prompt already contains start tokens and we append completion.
+        input_ids = torch.cat([prompt_ids, completion_ids], dim=-1)
+
+        # 3. Check total length against model max length
+        if input_ids.shape[-1] > model_max_len:
+            logger.warning(f"Sequence length {input_ids.shape[-1]} exceeds NLL model max length {model_max_len}. Truncating.")
+            # Truncate from the right (affects NLL calculation, but necessary)
+            input_ids = input_ids[:, :model_max_len]
+            # Adjust completion tokens length if truncation happened
+            completion_len = max(0, model_max_len - prompt_ids.shape[-1])
+        else:
+            completion_len = completion_ids.shape[-1]
+
+        # If prompt itself was longer than max length
+        if prompt_ids.shape[-1] >= model_max_len:
+             logger.warning(f"Prompt length {prompt_ids.shape[-1]} exceeds or equals model max length {model_max_len}. Cannot calculate completion NLL.")
              return None
 
-        # Convert to tensor
-        input_ids = torch.tensor([input_ids_list], device=device)
-
-        # Create labels: Ignore prompt tokens (-100), predict completion tokens
+        # 4. Create labels: ignore prompt tokens (-100)
         labels = input_ids.clone()
-        labels[:, :prompt_len_in_combined] = -100
+        labels[:, :prompt_ids.shape[-1]] = -100 # Ignore all prompt tokens
 
-        # Get model outputs (loss is averaged over sequence)
-        outputs = model(input_ids=input_ids, labels=labels)
-        avg_nll = outputs.loss.item()
+        # Ensure labels are correctly truncated if input_ids were truncated
+        if labels.shape[-1] > model_max_len:
+             labels = labels[:, :model_max_len]
 
-        # Calculate total NLL
+        # Ensure there are actual completion tokens left to predict
         num_predicted_tokens = (labels != -100).sum().item()
         if num_predicted_tokens == 0:
-            logger.warning("No completion tokens found after tokenization. Cannot calculate NLL.")
+            logger.warning(f"No completion tokens left after prompt/truncation ({completion_len} tokens). Cannot calculate NLL.")
             return None
 
+        # Move tensors to the correct device
+        input_ids = input_ids.to(device)
+        labels = labels.to(device)
+
+        # 5. Get model outputs (loss is averaged over sequence where labels != -100)
+        outputs = model(input_ids=input_ids, labels=labels)
+        avg_nll = outputs.loss.item() # Loss is the average CrossEntropyLoss
+
+        # Check for NaN/Inf loss
+        if not math.isfinite(avg_nll):
+             logger.warning(f"NLL calculation resulted in non-finite value ({avg_nll}). Skipping.")
+             return None
+
+        # 6. Calculate total NLL
+        # Use the actual number of predicted tokens for calculating total NLL
         total_nll = avg_nll * num_predicted_tokens
         return total_nll
 
