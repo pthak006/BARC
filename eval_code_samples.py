@@ -167,6 +167,10 @@ def main():
     os.makedirs("results", exist_ok=True)
     print(f"[eval_code_samples] Saving to {saving_file}")
 
+    # Create the file first
+    with open(saving_file, "w") as f:
+        pass
+
     accepted = 0
 
     for problem_idx, p in enumerate(tqdm(problem_answers, desc="Evaluating code")):
@@ -224,7 +228,7 @@ def main():
                 print(f"  {icon} Code {code_idx}: train_test={code_passes_train_test}")
 
         else:
-            # --- Single-thread approach (slower) but could store each code’s output in detail ---
+            # --- Single-thread approach (slower) but could store each code's output in detail ---
             for code_text in codes:
                 # We'll do exactly what validate(...) does but store outputs
                 # If you want the multi approach, you can remove or keep this block
@@ -235,19 +239,19 @@ def main():
         if any(train_test_verdicts):
             accepted += 1
 
-        # Attach to the JSON we’ll save
+        # Attach to the JSON we'll save
         p["train_verdicts"] = train_verdicts            # list of booleans
         p["train_test_verdicts"] = train_test_verdicts  # list of booleans
         p["output_grids"] = all_output_grids            # each item is a list of shape (#pairs) sub-lists
 
         print(f"Accepted so far: {accepted}/{problem_idx+1}")
+        
+        # Write this problem's result immediately after processing
+        with open(saving_file, "a") as f:
+            f.write(json.dumps(p) + "\n")
+            f.flush()  # Ensure it's written to disk
 
     print(f"Accepted: {accepted}/{len(problem_answers)}")
-
-    with open(saving_file, "w") as f:
-        for entry in problem_answers:
-            f.write(json.dumps(entry) + "\n")
-
     print(f"[eval_code_samples] All done. Wrote to: {saving_file}")
 
 if __name__ == "__main__":
