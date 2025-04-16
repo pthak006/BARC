@@ -15,6 +15,16 @@ from arc.types import ArcIOPair, ArcProblem
 
 from tqdm import tqdm
 
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
 def trace_calls(frame, event, arg):
     # Debugging function, can remain the same
     if event != 'call':
@@ -151,6 +161,7 @@ def multi_validate(arc_problem, codes):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--answer_file", help="Path to the .jsonl inference file (induction code).")
+    parser.add_argument("--start-index", type=int, default=0, help="Index to start processing from")
     args = parser.parse_args()
 
     if not args.answer_file or not os.path.exists(args.answer_file):
@@ -171,9 +182,10 @@ def main():
     with open(saving_file, "w") as f:
         pass
 
-    accepted = 0
-
-    for problem_idx, p in enumerate(tqdm(problem_answers, desc="Evaluating code")):
+    # Initialize accepted count with known value when using start-index
+    accepted = 29 if args.start_index > 0 else 0
+    
+    for problem_idx, p in enumerate(tqdm(problem_answers[args.start_index:], desc="Evaluating code", initial=args.start_index, total=len(problem_answers))):
         uid = p["uid"]
         responses = p["responses"]
         print(f"\nProblem: {uid}")
@@ -244,11 +256,11 @@ def main():
         p["train_test_verdicts"] = train_test_verdicts  # list of booleans
         p["output_grids"] = all_output_grids            # each item is a list of shape (#pairs) sub-lists
 
-        print(f"Accepted so far: {accepted}/{problem_idx+1}")
+        print(f"Accepted so far: {accepted}/{args.start_index + problem_idx + 1}")
         
         # Write this problem's result immediately after processing
         with open(saving_file, "a") as f:
-            f.write(json.dumps(p) + "\n")
+            f.write(json.dumps(p, cls=NumpyEncoder) + "\n")
             f.flush()  # Ensure it's written to disk
 
     print(f"Accepted: {accepted}/{len(problem_answers)}")

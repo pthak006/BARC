@@ -2,7 +2,7 @@ from tqdm import tqdm
 import orjsonl
 import os
 from collections import Counter
-# from datasets import load_dataset  # If you’re not using this, can remove
+# from datasets import load_dataset  # If you're not using this, can remove
 from arc import validation_problems
 
 # Only evaluate induction solutions.
@@ -10,7 +10,7 @@ MAX_FILES_TO_LOAD = 10000
 
 # POINT THIS TO YOUR DIRECTORY WITH THE .jsonl RESULT FILE(S):
 INDUCTION_SAMPLE_EXEC_RESULTS_DIRS_AND_SAMPLE_SIZE = [
-    ("results", 128),  # e.g. "results" is the folder containing your single .jsonl
+    ("results", 256),  # e.g. "results" is the folder containing your single .jsonl
 ]
 
 def grid_2d_to_tuple(grid):
@@ -24,6 +24,8 @@ def main():
 
     # 1) Gather all induction `.jsonl` files from the specified directories
     data_from_each_folder = []
+    processed_uids = set()  # Track unique UIDs processed
+    
     for induction_dir, num_samples_used in INDUCTION_SAMPLE_EXEC_RESULTS_DIRS_AND_SAMPLE_SIZE:
         jsonl_files = [
             f for f in os.listdir(induction_dir) if f.endswith(".jsonl")
@@ -45,6 +47,7 @@ def main():
                 uid = problem_dict["uid"]
                 if uid not in data_dict:
                     data_dict[uid] = {"train_verdicts": [], "output_grids": []}
+                    processed_uids.add(uid)  # Add to set of processed UIDs
                 data_dict[uid]["train_verdicts"].extend(problem_dict["train_verdicts"])
                 data_dict[uid]["output_grids"].extend(problem_dict["output_grids"])
 
@@ -70,6 +73,9 @@ def main():
         n_verdicts = len(vals["train_verdicts"])
         n_outputs  = len(vals["output_grids"])
         assert n_verdicts == n_outputs, f"Mismatch for {uid}"
+
+    # Print the number of problems extracted from the JSONL files
+    print(f"Number of problems extracted from JSONL files: {len(processed_uids)}")
 
     # 3) Perform pass@2 with majority voting
     induction_submission = {p.uid: [] for p in validation_problems}
