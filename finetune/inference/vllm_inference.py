@@ -1,4 +1,5 @@
 import time
+import os
 # BASE_MODEL = "mistralai/Codestral-22B-v0.1"
 # LORA_DIR = "data/barc-codestral-sft-qlora-v0.0.3-epoch3"
 
@@ -22,7 +23,7 @@ LORA_DIR = None
 
 
 BATCH_SIZE = 16
-num_of_samples_per_problem = 256
+num_of_samples_per_problem = 2048
 TENSOR_PARALLEL = 1
 
 
@@ -61,16 +62,31 @@ else:
 
 import datetime
 datetime_str = datetime.datetime.now().strftime("%m%d%H%M%S%f")
-if LORA_DIR:
-    saving_file = f"{problem_file.replace('.jsonl', '')}_{LORA_DIR.split('/')[-1]}_temp_{TEMPERATURE}_{datetime_str}.jsonl"
-else:
-    saving_file = f"{problem_file.replace('.jsonl', '')}_{BASE_MODEL.split('/')[-1]}_temp_{TEMPERATURE}_{datetime_str}.jsonl"
+saving_file = "arc_problems_validation_400_vllm_generated.jsonl"
 print(f"Saving to {saving_file}")
 time.sleep(5)
 
+# Load already processed UIDs
+processed_uids = set()
+if os.path.exists(saving_file):
+    with open(saving_file, "r") as f:
+        for line in f:
+            try:
+                processed_uids.add(json.loads(line)["uid"])
+            except:
+                pass  # Handle potential JSON parsing errors
+else:
+    # Initialize the output file only if it doesn't exist
+    with open(saving_file, "w") as f:
+        pass  # Just create/clear the file
+
 from tqdm import tqdm
 all_responses = []
-for d in tqdm(data):
+
+# Create a filtered list of unprocessed data items
+unprocessed_data = [d for d in data if d["uid"] not in processed_uids]
+# Apply tqdm to the filtered list with correct initial count
+for d in tqdm(unprocessed_data, total=len(data), initial=len(data)-len(unprocessed_data)):
     messages = d["messages"]
     assert messages[0]["role"] == "system"
     assert messages[1]["role"] == "user"
@@ -134,10 +150,12 @@ for d in tqdm(data):
                 # print(f"Generated text: {generated_text!r}\n")
                 responses.append(generated_text)
 
-    all_responses.append({"uid": d["uid"], "prompt":inputs , "responses": responses, "base_model": BASE_MODEL, "lora_dir": LORA_DIR})
-
-    with open(saving_file, "w") as f:
-        f.write("\n".join(json.dumps(p) for p in all_responses))
+    problem_response = {"uid": d["uid"], "prompt":inputs, "responses": responses, "base_model": BASE_MODEL, "lora_dir": LORA_DIR}
+    all_responses.append(problem_response)
+    
+    # Write this problem's responses immediately to the file
+    with open(saving_file, "a") as f:
+        f.write(json.dumps(problem_response) + "\n")
 
 print(f"Saving to {saving_file}")
 
