@@ -16,6 +16,9 @@ pip install torch==2.4
 echo "Installing flash-attn..."
 pip install flash-attn --no-build-isolation
 
+echo "Installing Google API libraries..."
+pip install --user google-api-python-client google-auth-httplib2 google-auth-oauthlib
+
 echo "Installing alignment-handbook requirements..."
 # Navigate into the alignment-handbook directory
 cd finetune/alignment-handbook/
@@ -36,8 +39,8 @@ pip install pebble
 
 # --- Logins ---
 echo "Logging into Hugging Face CLI..."
-# Use the token and explicitly answer 'no' (via False) to adding it as a git credential
-huggingface-cli login --token "$HUGGINGFACE_TOKEN" --add-to-git-credential False
+# Use the token and explicitly answer 'no' (via false) to adding it as a git credential
+huggingface-cli login --token "$HUGGINGFACE_TOKEN"
 
 echo "Logging into Wandb..."
 # Provide the token directly to the login command for non-interactive login
