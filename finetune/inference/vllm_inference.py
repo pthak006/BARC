@@ -1,5 +1,6 @@
 import time
 import os
+import torch
 # BASE_MODEL = "mistralai/Codestral-22B-v0.1"
 # LORA_DIR = "data/barc-codestral-sft-qlora-v0.0.3-epoch3"
 
@@ -26,6 +27,9 @@ BATCH_SIZE = 16
 num_of_samples_per_problem = 2048
 TENSOR_PARALLEL = 1
 
+# Detect device automatically
+DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+print(f"Using device: {DEVICE}")
 
 from transformers import AutoTokenizer
 if LORA_DIR:
@@ -54,11 +58,11 @@ from vllm.lora.request import LoRARequest
 
 if LORA_DIR:
     llm = LLM(model=BASE_MODEL, enable_lora=True, max_lora_rank=256, max_model_len=12000,
-            enable_prefix_caching=True, tensor_parallel_size=TENSOR_PARALLEL)
+            enable_prefix_caching=True, tensor_parallel_size=TENSOR_PARALLEL, device=DEVICE)
     lora_request=LoRARequest("barc_adapter", 1, LORA_DIR)
 else:
     llm = LLM(model=BASE_MODEL, enable_lora=False, max_model_len=12000,
-            enable_prefix_caching=True, tensor_parallel_size=TENSOR_PARALLEL)
+            enable_prefix_caching=True, tensor_parallel_size=TENSOR_PARALLEL, device=DEVICE)
 
 import datetime
 datetime_str = datetime.datetime.now().strftime("%m%d%H%M%S%f")
