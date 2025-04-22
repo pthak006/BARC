@@ -9,6 +9,13 @@ set -e
 HUGGINGFACE_TOKEN="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"
 WANDB_TOKEN="3189cdd95c63d2408e95da0b79a5439d79f145a5"
 
+# --- System Updates and Packages ---
+echo "Updating package lists..."
+sudo apt update
+
+echo "Installing tmux..."
+sudo apt install -y tmux
+
 # --- Installation Steps ---
 echo "Installing PyTorch..."
 pip install torch==2.4
