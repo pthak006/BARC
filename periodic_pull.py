@@ -16,13 +16,13 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 def drive_service():
     creds = None
     tok_path = Path("token.json")
+
     if tok_path.exists():
         creds = Credentials.from_authorized_user_file(tok_path, SCOPES)
 
@@ -30,9 +30,13 @@ def drive_service():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-            # headless: print URL, ask for code
+            # -------------- headless, copy-paste flow --------------
+            flow = InstalledAppFlow.from_client_secrets_file(
+                "credentials.json", SCOPES
+            )
+            # prints a URL -> open in any browser -> copy code back
             creds = flow.run_console()
+            # -------------------------------------------------------
         tok_path.write_text(creds.to_json())
 
     return build("drive", "v3", credentials=creds, cache_discovery=False)
