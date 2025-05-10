@@ -22,16 +22,20 @@ SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 def drive_service():
     creds = None
-    if Path("token.json").exists():
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    tok_path = Path("token.json")
+    if tok_path.exists():
+        creds = Credentials.from_authorized_user_file(tok_path, SCOPES)
+
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-            creds = flow.run_local_server(port=0)
-        Path("token.json").write_text(creds.to_json())
-    return build("drive", "v3", credentials=creds)
+            # headless: print URL, ask for code
+            creds = flow.run_console()
+        tok_path.write_text(creds.to_json())
+
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 def find_file(svc, name, folder):
     q = f"name='{name}' and '{folder}' in parents and trashed=false"
