@@ -5,6 +5,7 @@ import json
 from enum import Enum
 import argparse
 import numpy as np
+import gc  # Add garbage collection
 
 from utils import parse_code
 from execution import multi_execute_transformation
@@ -178,14 +179,39 @@ def main():
     os.makedirs("results", exist_ok=True)
     print(f"[eval_code_samples] Saving to {saving_file}")
 
-    # Create the file first
-    with open(saving_file, "w") as f:
-        pass
-
-    # Initialize accepted count with known value when using start-index
-    accepted = 29 if args.start_index > 0 else 0
+    # Check for existing results and load processed UIDs
+    processed_uids = set()
+    accepted = 0
     
-    for problem_idx, p in enumerate(tqdm(problem_answers[args.start_index:], desc="Evaluating code", initial=args.start_index, total=len(problem_answers))):
+    if os.path.exists(saving_file) and os.path.getsize(saving_file) > 0:
+        with open(saving_file, 'r') as f:
+            for line in f:
+                try:
+                    processed_problem = json.loads(line)
+                    processed_uids.add(processed_problem["uid"])
+                    if any(processed_problem.get("train_test_verdicts", [])):
+                        accepted += 1
+                except json.JSONDecodeError:
+                    continue
+        
+        print(f"Found {len(processed_uids)} already processed problems, {accepted} accepted")
+    else:
+        # Create the file if it doesn't exist
+        with open(saving_file, "w") as f:
+            pass
+    
+    # Filter out already processed problems
+    unprocessed_problems = []
+    for p in problem_answers:
+        if p["uid"] not in processed_uids:
+            unprocessed_problems.append(p)
+    
+    print(f"Processing {len(unprocessed_problems)} new problems out of {len(problem_answers)} total")
+    
+    # Initialize tqdm with the correct initial value
+    initial_count = len(processed_uids)
+    
+    for problem_idx, p in enumerate(tqdm(unprocessed_problems, desc="Evaluating code", initial=initial_count, total=len(problem_answers))):
         uid = p["uid"]
         responses = p["responses"]
         print(f"\nProblem: {uid}")
@@ -256,12 +282,19 @@ def main():
         p["train_test_verdicts"] = train_test_verdicts  # list of booleans
         p["output_grids"] = all_output_grids            # each item is a list of shape (#pairs) sub-lists
 
-        print(f"Accepted so far: {accepted}/{args.start_index + problem_idx + 1}")
+        current_total = initial_count + problem_idx + 1
+        print(f"Accepted so far: {accepted}/{current_total}")
         
         # Write this problem's result immediately after processing
         with open(saving_file, "a") as f:
             f.write(json.dumps(p, cls=NumpyEncoder) + "\n")
             f.flush()  # Ensure it's written to disk
+        
+        # Clear memory after writing to file
+        p["output_grids"] = None  # Clear large data
+        all_output_grids = []
+        results = None
+        gc.collect()  # Trigger garbage collection
 
     print(f"Accepted: {accepted}/{len(problem_answers)}")
     print(f"[eval_code_samples] All done. Wrote to: {saving_file}")
