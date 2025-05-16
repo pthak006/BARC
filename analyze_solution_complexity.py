@@ -142,55 +142,81 @@ logger.info(f"Metrics details will be logged to: {METRICS_LOG_FILENAME}")
 # --- End Logging Setup ---
 
 
-# --- NLL Calculation Function ---
-@torch.no_grad()
+# --- NLL Calculation Function (Reverted to previous version based on git diff) ---
+@torch.no_grad() # Ensure no gradients are calculated during NLL computation
 def calculate_nll(prompt_text: str, completion_text: str, model, tokenizer, device='cuda', model_max_len=None) -> Optional[float]:
     """
     Calculates the total negative log-likelihood of the completion_text given the prompt_text.
     Uses standard tokenizer call and handles prompt/completion separation for labeling.
     """
+    # Use the model's configured max length if not provided
     if model_max_len is None:
-        model_max_len = getattr(model.config, 'max_position_embeddings', 2048)
+        model_max_len = getattr(model.config, 'max_position_embeddings', 2048) # Default to 2048 if not found
 
     try:
-        full_text = prompt_text + completion_text
-        encoding = tokenizer(
-            full_text, add_special_tokens=True, return_tensors='pt',
-            truncation=True, max_length=model_max_len
-        )
-        input_ids = encoding['input_ids']
+        # 1. Tokenize prompt and completion separately to find prompt length
+        # Important: Use add_special_tokens=False initially if the model's template logic
+        # is handled by build_inputs_with_special_tokens later or if we handle manually.
+        # Let's assume the prompt already has necessary BOS etc. from apply_chat_template
+        # and completion should be treated as raw text.
+        prompt_encoding = tokenizer(prompt_text, add_special_tokens=False, return_tensors="pt", truncation=False)
+        completion_encoding = tokenizer(completion_text, add_special_tokens=False, return_tensors="pt", truncation=False)
 
-        if input_ids.shape[-1] >= model_max_len:
-            logger.warning(f"Seq length {input_ids.shape[-1]} >= model max length {model_max_len}. Skipping NLL.")
-            return None
+        prompt_ids = prompt_encoding['input_ids']
+        completion_ids = completion_encoding['input_ids']
 
-        prompt_encoding_for_len = tokenizer(prompt_text, add_special_tokens=True, return_tensors='pt')
-        prompt_tokens_length = prompt_encoding_for_len['input_ids'].shape[1]
+        # 2. Combine into a single sequence
+        # Note: Depending on the model/tokenizer, special tokens (like BOS/EOS) might need
+        # careful handling. This assumes prompt already contains start tokens and we append completion.
+        input_ids = torch.cat([prompt_ids, completion_ids], dim=-1)
 
-        if prompt_tokens_length >= input_ids.shape[-1]:
-            logger.warning(f"Prompt tokens {prompt_tokens_length} >= total tokens {input_ids.shape[-1]}. Skipping NLL.")
-            return None
+        # 3. Check total length against model max length
+        if input_ids.shape[-1] > model_max_len:
+            logger.warning(f"Sequence length {input_ids.shape[-1]} exceeds NLL model max length {model_max_len}. Truncating.")
+            # Truncate from the right (affects NLL calculation, but necessary)
+            input_ids = input_ids[:, :model_max_len]
+            # Adjust completion tokens length if truncation happened
+            completion_len = max(0, model_max_len - prompt_ids.shape[-1])
+        else:
+            completion_len = completion_ids.shape[-1]
 
+        # If prompt itself was longer than max length
+        if prompt_ids.shape[-1] >= model_max_len:
+             logger.warning(f"Prompt length {prompt_ids.shape[-1]} exceeds or equals model max length {model_max_len}. Cannot calculate completion NLL.")
+             return None
+
+        # 4. Create labels: ignore prompt tokens (-100)
         labels = input_ids.clone()
-        labels[:, :prompt_tokens_length] = -100
+        labels[:, :prompt_ids.shape[-1]] = -100 # Ignore all prompt tokens
 
+        # Ensure labels are correctly truncated if input_ids were truncated
+        if labels.shape[-1] > model_max_len:
+             labels = labels[:, :model_max_len]
+
+        # Ensure there are actual completion tokens left to predict
         num_predicted_tokens = (labels != -100).sum().item()
         if num_predicted_tokens == 0:
-            logger.warning(f"No completion tokens left after prompt. Skipping NLL.")
+            logger.warning(f"No completion tokens left after prompt/truncation ({completion_len} tokens). Cannot calculate NLL.")
             return None
 
+        # Move tensors to the correct device
         input_ids = input_ids.to(device)
         labels = labels.to(device)
 
+        # 5. Get model outputs (loss is averaged over sequence where labels != -100)
         outputs = model(input_ids=input_ids, labels=labels)
-        avg_nll = outputs.loss.item()
+        avg_nll = outputs.loss.item() # Loss is the average CrossEntropyLoss
 
+        # Check for NaN/Inf loss
         if not math.isfinite(avg_nll):
-             logger.warning(f"NLL non-finite ({avg_nll}). Skipping.")
+             logger.warning(f"NLL calculation resulted in non-finite value ({avg_nll}). Skipping.")
              return None
 
+        # 6. Calculate total NLL
+        # Use the actual number of predicted tokens for calculating total NLL
         total_nll = avg_nll * num_predicted_tokens
         return total_nll
+
     except Exception as e:
         logger.error(f"Error during NLL calculation: {e}", exc_info=True)
         return None
