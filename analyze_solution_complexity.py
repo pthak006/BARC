@@ -5,12 +5,13 @@
 Analyzes generated ARC solutions from a JSONL file.
 Calculates accuracy (based on training pairs from a pre-computed exec_results file),
 raw length (characters), and bit-length (NLL using a specified Code LLM).
-Saves the results to a CSV file.
+Saves the results to a CSV file incrementally.
 
 Based on the original eval_code_samples.py from the BARC repository.
 Changes:
 - 'is_correct' is now inferred from an exec_results_v4.jsonl file.
 - 'code_parse_error' column and its calculation have been removed.
+- Results are saved incrementally after each problem is processed.
 """
 
 import os
@@ -185,9 +186,17 @@ def main():
         logger.error(f"Failed to load or parse exec_results_file: {e}", exc_info=True)
         sys.exit(1)
 
+    # --- Initialize Output CSV File ---
+    output_dir_path = pathlib.Path(args.output_metrics_file).parent
+    if output_dir_path:
+        output_dir_path.mkdir(parents=True, exist_ok=True)
+    
+    # Create CSV with headers
+    columns = ["uid", "response_index", "is_correct", "raw_length", "bit_length"]
+    pd.DataFrame(columns=columns).to_csv(args.output_metrics_file, index=False)
+    logger.info(f"Initialized output CSV file: {args.output_metrics_file}")
 
     # --- Process Solutions ---
-    all_metrics = []
     solved_problem_count = 0
     total_problems = len(problem_answers)
 
@@ -195,10 +204,11 @@ def main():
         uid = p_answer.get("uid")
         responses = p_answer.get("responses", [])
         original_prompt = p_answer.get("prompt")
+        problem_metrics = []  # Temporary list for current problem's metrics
 
         current_problem_processed_index = problem_idx + 1
 
-        if not uid: # Removed responses check here, will handle per response
+        if not uid:
             logger.warning(f"Skipping entry {problem_idx} due to missing 'uid'.")
             logger.info(f"Problems Solved So Far: {solved_problem_count}/{current_problem_processed_index}")
             continue
@@ -226,14 +236,13 @@ def main():
                         problem_solved_by_any_response = True
                 else:
                     logger.warning(f"Response index {response_idx} out of bounds for UID {uid} in exec_results_file (found {len(problem_exec_verdicts)} verdicts). Setting is_correct to None.")
-            # else: 'is_correct' remains None as problem_exec_verdicts was not found for UID
 
             # Calculate Raw Length
-            raw_length = len(code) # len("") is 0, so this is fine if code parsing failed
+            raw_length = len(code)
 
             # Calculate Bit-Length (NLL)
             bit_length = None
-            if code and original_prompt: # Only if code was parsed and prompt exists
+            if code and original_prompt:
                 total_nll = calculate_nll(original_prompt, code, nll_model, nll_tokenizer, args.device, nll_model_max_len)
                 if total_nll is not None:
                     bit_length = total_nll / math.log(2)
@@ -242,7 +251,6 @@ def main():
             elif not code:
                  logger.debug(f"Skipping NLL for {uid} response {response_idx} as no code was parsed.")
 
-
             # Store Metrics
             metric_entry = {
                 "uid": uid,
@@ -250,34 +258,29 @@ def main():
                 "is_correct": is_correct,
                 "raw_length": raw_length,
                 "bit_length": bit_length,
-                # "code_parse_error" column removed
             }
-            all_metrics.append(metric_entry)
+            problem_metrics.append(metric_entry)
 
             # Log metrics to separate log file
             metrics_logger.info(f"Problem: {uid}, Response: {response_idx}, Correct: {is_correct}, "
                                f"Length: {raw_length}, Bit-Length: {bit_length}")
-        # End inner loop (response_idx)
+
+        # Save metrics for this problem
+        if problem_metrics:
+            problem_df = pd.DataFrame(problem_metrics)
+            problem_df.to_csv(args.output_metrics_file, mode='a', header=False, index=False)
+            logger.debug(f"Saved metrics for problem {uid}")
+        
+        # Clear problem metrics from memory
+        problem_metrics = []
 
         if problem_solved_by_any_response:
             solved_problem_count += 1
         logger.info(f"Problems Solved So Far: {solved_problem_count}/{current_problem_processed_index}")
-        # End outer loop (problem_idx)
 
     # --- Final Summary ---
     logger.info(f"Finished processing. Total problems solved: {solved_problem_count}/{total_problems}")
-
-    # --- Save Results ---
-    logger.info(f"Saving calculated metrics ({len(all_metrics)} total solutions analyzed) to: {args.output_metrics_file}")
-    metrics_df = pd.DataFrame(all_metrics)
-    try:
-        output_dir_path = pathlib.Path(args.output_metrics_file).parent
-        if output_dir_path:
-             output_dir_path.mkdir(parents=True, exist_ok=True)
-        metrics_df.to_csv(args.output_metrics_file, index=False)
-        logger.info("Metrics saved successfully.")
-    except Exception as e:
-         logger.error(f"Failed to save metrics to CSV: {e}", exc_info=True)
+    logger.info("Metrics have been saved incrementally to the CSV file.")
 
 if __name__ == "__main__":
     main()
