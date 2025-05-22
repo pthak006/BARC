@@ -10,7 +10,7 @@ MAX_FILES_TO_LOAD = 10000
 
 # POINT THIS TO YOUR DIRECTORY WITH THE .jsonl RESULT FILE(S):
 INDUCTION_SAMPLE_EXEC_RESULTS_DIRS_AND_SAMPLE_SIZE = [
-    ("results", 256),  # e.g. "results" is the folder containing your single .jsonl
+    ("results", 2048),  # e.g. "results" is the folder containing your single .jsonl
 ]
 
 def grid_2d_to_tuple(grid):
